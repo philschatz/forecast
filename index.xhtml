@@ -8,6 +8,7 @@
             const latlong = window.location.hash.substring(1)
             if (!latlong) {
                 alert('Include your latitude and longitude in the URL. To find it you can search google maps and copy everything in the URL _after_ the @ sign. Like this: ...#41.6224273,-97.1851129')
+                throw new Error('Did not specify latitude and longitude')
             }
             const [latitude, longitude] = latlong.split(',')
 
@@ -16,47 +17,56 @@
                 const parser = new DOMParser();
                 const processor = new XSLTProcessor();
                 const style = parser.parseFromString(`<xsl:stylesheet 
-                xmlns="http://www.w3.org/1999/xhtml" 
-                xmlns:x="https://philschatz.com/custom-weather-namespace-so-we-can-xpath" 
-                xmlns:xsl="http://www.w3.org/1999/XSL/Transform" 
-                exclude-result-prefixes="xsi"
-                version="1.0">
-
+        xmlns="http://www.w3.org/1999/xhtml" 
+        xmlns:x="https://philschatz.com/custom-weather-namespace-so-we-can-xpath" 
+        xmlns:xsl="http://www.w3.org/1999/XSL/Transform" 
+        exclude-result-prefixes="xsi"
+        version="1.0">
 <xsl:output method="xml" omit-xml-declaration="yes" encoding="utf-8"/>
-
 <xsl:template name="doDay">
     <xsl:param name="position"/>
+    <xsl:variable name="firstDayName" select="//x:time-layout[starts-with(x:layout-key/text(), 'k-p24h-')]/x:start-valid-time[1]/@period-name"/>
+    <xsl:variable name="startsWithTonight" select="$firstDayName = 'Tonight'"/>
+    <xsl:variable name="offset">
+        <xsl:choose>
+            <xsl:when test="$startsWithTonight">-1</xsl:when>
+            <xsl:otherwise>0</xsl:otherwise>
+        </xsl:choose>
+    </xsl:variable>
     <xsl:variable name="day" select="//x:time-layout[starts-with(x:layout-key/text(), 'k-p24h-')]/x:start-valid-time[position() = $position]"/>
-    <xsl:variable name="max" select="//x:parameters/x:temperature[@type='maximum']/x:value[position() = $position]/text()"/>
+    <xsl:variable name="max" select="//x:parameters/x:temperature[@type='maximum']/x:value[position() = $position + $offset]/text()"/>
     <xsl:variable name="min" select="//x:parameters/x:temperature[@type='minimum']/x:value[position() = $position]/text()"/>
-
+    <xsl:variable name="maxDesc" select="//x:parameters/x:weather/x:weather-conditions[position() = $position * 2 + $offset - 1]/@weather-summary"/>
+    <xsl:variable name="minDesc" select="//x:parameters/x:weather/x:weather-conditions[position() = $position * 2 + $offset]/@weather-summary"/>
     <xsl:variable name="maxStyle"><xsl:call-template name="stylize"><xsl:with-param name="temp" select="$max"/></xsl:call-template></xsl:variable>
     <xsl:variable name="minStyle"><xsl:call-template name="stylize"><xsl:with-param name="temp" select="$min"/></xsl:call-template></xsl:variable>
-
+    <xsl:variable name="dayText">
+        <xsl:choose>
+            <xsl:when test="contains($day/@period-name, ' Night')"><xsl:value-of select="substring-before($day/@period-name, ' Night')"/></xsl:when>
+            <xsl:otherwise><xsl:value-of select="$day/@period-name"/></xsl:otherwise>
+        </xsl:choose>
+    </xsl:variable>
     <tr>
-        <td><time datetime="{$day/text()}"><xsl:value-of select="$day/@period-name"/></time></td>
+        <td><time datetime="{$day/text()}"><xsl:value-of select="$dayText"/></time></td>
         <td style="{$maxStyle}"><xsl:value-of select="$max"/></td>
         <td style="{$minStyle}"><xsl:value-of select="$min"/></td>
+        <td><xsl:value-of select="$maxDesc"/></td>
+        <td><xsl:value-of select="$minDesc"/></td>
     </tr>
 </xsl:template>
-
-
 <xsl:template match="@*|node()">
     <xsl:copy>
         <xsl:apply-templates select="@*|node()"/>
     </xsl:copy>
 </xsl:template>
-
 <xsl:template match="/x:dwml">
-
     <xsl:for-each select=".//x:hazard">
         <p>
-            <a href="{x:hazardTextURL}"><em><xsl:value-of select="@headline"/></em></a><xsl:text>. </xsl:text>
+            <a href="{x:hazardTextURL}">⚠️<em><xsl:value-of select="@headline"/></em></a><xsl:text>. </xsl:text>
         </p>
     </xsl:for-each>
-
     <table>
-        <thead><tr><td>Day</td><td>High</td><td>Low</td></tr></thead>
+        <thead><tr><th>Day</th><th>High</th><th>Low</th><th>Day</th><th>Night</th></tr></thead>
         <tbody>
             <xsl:call-template name="doDay"><xsl:with-param name="position" select="1"/></xsl:call-template>
             <xsl:call-template name="doDay"><xsl:with-param name="position" select="2"/></xsl:call-template>
@@ -67,13 +77,9 @@
             <xsl:call-template name="doDay"><xsl:with-param name="position" select="7"/></xsl:call-template>
         </tbody>
     </table>
-
 </xsl:template>
-
-
 <xsl:template name="stylize">
     <xsl:param name="temp"/>
-
     <xsl:choose>
         <xsl:when test="$temp > 90">color: red; font-weight: bold;</xsl:when>
         <xsl:when test="$temp > 80">color: red;</xsl:when>
@@ -83,8 +89,6 @@
         <xsl:otherwise></xsl:otherwise>
     </xsl:choose>
 </xsl:template>
-
-
 </xsl:stylesheet>`, 'application/xml')
 
                 processor.importStylesheet(style.documentElement);
